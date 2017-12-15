@@ -32,15 +32,14 @@ while valuesB.count < rounds {
 var matches = 0
 
 for i in 0..<rounds {    
-    let bitRepA = String(valuesA[i], radix: 2)
-    let bitRepB = String(valuesB[i], radix: 2)
+    let valueA = valuesA[i]
+    let valueB = valuesB[i]
     
-    guard bitRepA.count >= 16 && bitRepB.count >= 16 else { continue }
+    // shift all but the last 16 bits to the left
+    let shiftedA = valueA << (valueA.bitWidth-16)
+    let shiftedB = valueB << (valueB.bitWidth-16)
     
-    let bitsA = bitRepA[bitRepA.index(bitRepA.endIndex, offsetBy: -16)..<bitRepA.endIndex]
-    let bitsB = bitRepB[bitRepB.index(bitRepB.endIndex, offsetBy: -16)..<bitRepB.endIndex]
-        
-    if bitsA == bitsB {
+    if shiftedA == shiftedB {
         matches += 1
     }
 }
