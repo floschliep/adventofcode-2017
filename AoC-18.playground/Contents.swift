@@ -16,13 +16,14 @@ enum Value {
 }
 
 enum Instruction {
-    case playSound(Value)
+    case send(Value)
+    case receive(Character)
+    case jump(greaterThanZero: Value, offset: Value)
+    
     case setRegister(Character, to: Value)
     case increaseRegister(Character, by: Value)
     case multiplyRegister(Character, by: Value)
     case moduloRegister(Character, by: Value)
-    case recoverFrequency(nonZero: Value)
-    case jump(greaterThanZero: Value, offset: Value)
     
     init?(_ string: Substring) {
         let components: [Substring] = string.split(separator: " ")
@@ -30,7 +31,7 @@ enum Instruction {
         
         switch components[0] {
         case "snd":
-            self = .playSound(Value(components[1]))
+            self = .send(Value(components[1]))
         case "set":
             self = .setRegister(components[1].first!, to: Value(components[2]))
         case "add":
@@ -40,7 +41,7 @@ enum Instruction {
         case "mod":
             self = .moduloRegister(components[1].first!, by: Value(components[2]))
         case "rcv":
-            self = .recoverFrequency(nonZero: Value(components[1]))
+            self = .receive(components[1].first!)
         case "jgz":
             self = .jump(greaterThanZero: Value(components[1]), offset: Value(components[2]))
         default:
@@ -49,10 +50,31 @@ enum Instruction {
     }
 }
 
-struct RegisterSet {
-    private var registers = [Character: Int]()
-    private var playedFrequencies = [Int]()
+enum ProgramError: Error {
+    case deadlock(Program, Character)
+}
 
+struct Program {
+    let id: Int
+    private var registers: [Character: Int]
+    private var queue: [Int]
+    private(set) var sendCount: Int
+    
+    var isQueueEmpty: Bool {
+        return self.queue.isEmpty
+    }
+    
+// MARK: - Instantiation
+    
+    init(id: Int) {
+        self.id = id
+        self.registers = ["p": id]
+        self.queue = [Int]()
+        self.sendCount = 0
+    }
+
+// MARK: - Subscripts
+    
     subscript(register: Character) -> Int {
         set {
             self.set(newValue, for: register)
@@ -67,60 +89,86 @@ struct RegisterSet {
         }
     }
     
-    mutating func set(_ frequency: Int, `for` register: Character) {
-        self.registers[register] = frequency
-    }
+// MARK: - Actions
     
     func get(_ value: Value) -> Int {
         switch value {
-        case let .integer(frequency):
-            return frequency
+        case let .integer(val):
+            return val
         case let .register(register):
             return self.registers[register] ?? 0
         }
     }
     
-    mutating func play(_ frequency: Int) {
-        self.playedFrequencies.append(frequency)
+    mutating func set(_ val: Int, `for` register: Character) {
+        self.registers[register] = val
     }
     
-    var lastPlayedFrequency: Int? {
-        return self.playedFrequencies.last
+    private mutating func enqueue(_ value: Int) {
+        self.queue.append(value)
+    }
+    
+    mutating func processRegister(_ register: Character) -> Bool {
+        guard let value = self.queue.first else { return false }
+        
+        self[register] = value
+        self.queue = Array(self.queue.dropFirst())
+        
+        return true
+    }
+    
+    mutating func send(_ value: Value, to target: inout Program) {
+        self.sendCount += 1
+        target.enqueue(self[value])
+    }
+}
+
+func process(instructions: [Instruction], position: inout Int, source: inout Program, target: inout Program) {
+    while position < instructions.count {
+        let instruction = instructions[position]
+        
+        switch instruction {
+        case let .send(value):
+            source.send(value, to: &target)
+        case let .receive(register):
+            guard source.processRegister(register) else { return }
+        case let .setRegister(register, value):
+            source[register] = source[value]
+        case let .increaseRegister(register, value):
+            source[register] += source[value]
+        case let .multiplyRegister(register, value):
+            source[register] *= source[value]
+        case let .moduloRegister(register, value):
+            source[register] = source[register]%source[value]
+        case let .jump(condition, offset):
+            guard source[condition] > 0 else { break }
+            position += source[offset]
+            continue
+        }
+        
+        position += 1
     }
 }
 
 let filePath = Bundle.main.path(forResource: "input", ofType: "txt")!
 let file = try! String(contentsOfFile: filePath).trimmingCharacters(in: .newlines)
-
 let instructions = file.split(separator: "\n").map { Instruction($0)! }
-var set = RegisterSet()
-var position = 0
 
-instructionLoop: while position < instructions.count {
-    let instruction = instructions[position]
+var program0 = Program(id: 0)
+var position0 = 0
+
+var program1 = Program(id: 1)
+var position1 = 0
+
+var deadlock = false
+
+while (position0 < instructions.count || position1 < instructions.count) && !deadlock {
+    process(instructions: instructions, position: &position0, source: &program0, target: &program1)
+    process(instructions: instructions, position: &position1, source: &program1, target: &program0)
     
-    switch instruction {
-    case let .playSound(value):
-        set.play(set[value])
-    case let .setRegister(register, value):
-        set[register] = set[value]
-    case let .increaseRegister(register, value):
-        set[register] += set[value]
-    case let .multiplyRegister(register, value):
-        set[register] *= set[value]
-    case let .moduloRegister(register, value):
-        set[register] = set[register]%set[value]
-    case let .recoverFrequency(value):
-        let frequency = set[value]
-        guard frequency != 0 else { break }
-        assert(set.lastPlayedFrequency == 9423)
-        break instructionLoop
-    case let .jump(condition, offset):
-        guard set[condition] > 0 else { break }
-        position += set[offset]
-        continue
+    if program0.isQueueEmpty && program1.isQueueEmpty {
+        deadlock = true
     }
-    
-    position += 1
 }
 
+assert(program1.sendCount == 7620)
